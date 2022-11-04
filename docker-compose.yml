@@ -1,0 +1,10 @@
+version: "3"
+
+networks:
+  public:
+    name: ${EXTERNAL_NETWORK:-caddy}
+    external: true
+  backend:
+    driver: bridge
+  default:
+    driver: bridge
