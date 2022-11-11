@@ -1,6 +1,88 @@
 version: "3"
 
+x-workspace:
+  build:
+    args: &workspace-args
+      INSTALL_BASH_COMPLETION: ${WORKSPACE_INSTALL_BASH_COMPLETION:-false}
+      INSTALL_NODEJS_LTS: ${WORKSPACE_INSTALL_NODEJS_LTS:-false}
+      INSTALL_VIM: ${WORKSPACE_INSTALL_VIM:-false}
+  volumes:
+    - &bashrc {
+      source: ./workspace/bashrc,
+      target: /root/.bashrc,
+      type: bind
+    }
+    - &sourced {
+      source: ./workspace/source.d,
+      target: /root/.source.d,
+      type: bind
+    }
+    - &gnupg {
+        source: "${WORKSPACE_GPG_DIR:-./workspace/gpg}",
+        target: /root/.gnupg,
+        type: bind
+      }
+    - &ssh {
+        source: "${WORKSPACE_SSH_DIR:-./workspace/ssh}",
+        target: /root/.ssh,
+        type: bind
+      }
+
 services:
+  ### App Service ##############################################################
+  app:
+    image: ${COMPOSE_PROJECT_NAME}-app:${COMPOSE_PROJECT_VERSION:-1.0}
+    depends_on:
+      - database
+    build:
+      context: ./containers/php-fpm
+      args:
+        <<: [ *workspace-args ]
+        TIMEZONE: ${PHP_TIMEZONE:-Asia/Jakarta}
+        PHP_VERSION: ${PHP_VERSION:-8.1}
+        ### Custom Install #####################################################
+        INSTALL_BCMATH: ${PHP_INSTALL_BCMATH:-false}
+        INSTALL_BZIP: ${PHP_INSTALL_BZIP:-false}
+        INSTALL_CALENDAR: ${PHP_INSTALL_CALENDAR:-false}
+        INSTALL_COMPOSER: ${PHP_INSTALL_COMPOSER:-false}
+        INSTALL_GD: ${PHP_INSTALL_GD:-false}
+        INSTALL_GHOSTSCRIPT: ${PHP_INSTALL_GHOSTSCRIPT:-false}
+        INSTALL_GMP: ${PHP_INSTALL_GMP:-false}
+        INSTALL_ICONV: ${PHP_INSTALL_ICONV:-false}
+        INSTALL_IMAGE_OPTIMIZERS: ${PHP_INSTALL_IMAGE_OPTIMIZERS:-false}
+        INSTALL_IMAGEMAGICK: ${PHP_INSTALL_IMAGEMAGICK:-false}
+        INSTALL_IMAP: ${PHP_INSTALL_IMAP:-false}
+        INSTALL_INTL: ${PHP_INSTALL_INTL:-false}
+        INSTALL_LDAP: ${PHP_INSTALL_LDAP:-false}
+        INSTALL_MEMCACHED: ${PHP_INSTALL_MEMCACHED:-false}
+        INSTALL_MONGO: ${PHP_INSTALL_MONGO:-false}
+        INSTALL_MSSQL: ${PHP_INSTALL_MSSQL:-false}
+        INSTALL_MYSQLI: ${PHP_INSTALL_MYSQLI:-false}
+        INSTALL_OCI8: ${PHP_INSTALL_OCI8:-false}
+        INSTALL_OPCACHE: ${PHP_INSTALL_OPCACHE:-false}
+        INSTALL_PCNTL: ${PHP_INSTALL_PCNTL:-false}
+        INSTALL_PGSQL: ${PHP_INSTALL_PGSQL:-false}
+        INSTALL_PHPDBG: ${PHP_INSTALL_PHPDBG:-false}
+        INSTALL_PHPREDIS: ${PHP_INSTALL_PHPREDIS:-false}
+        INSTALL_SUPERVISOR: ${PHP_INSTALL_SUPERVISOR:-false}
+        INSTALL_SYMFONY_CLI: ${PHP_INSTALL_SYMFONY_CLI:-false}
+        INSTALL_TOKENIZER: ${PHP_INSTALL_TOKENIZER:-false}
+        INSTALL_XDEBUG: ${PHP_INSTALL_XDEBUG:-false}
+        INSTALL_ZIP_ARCHIVE: ${PHP_INSTALL_ZIP_ARCHIVE:-false}
+    working_dir: /srv/app
+    environment:
+      - PHP_INI_SCAN_DIR=/usr/local/etc/php/conf.d:/usr/local/etc/php/local.d
+    volumes:
+      - { <<: [ *bashrc  ] }
+      - { <<: [ *gnupg   ] }
+      - { <<: [ *sourced ] }
+      - { <<: [ *ssh     ] }
+      - ./:/srv
+      - ./containers/php-fpm/conf.d:/usr/local/etc/php/local.d
+      - ./storage/cache/composer:/root/.composer/cache
+      - ./storage/code-server/php-fpm/:/root/.vscode-server
+
+  ### Database Service #########################################################
   database-admin:
     image: adminer:4.8.1
     environment:
@@ -9,25 +91,21 @@ services:
       - public
     depends_on:
       - database
+
   database:
     image: postgres:${DB_VERSION:-14}-alpine
-    environment:
-      - POSTGRES_DB=${DB_DATABASE:-app}
-      - POSTGRES_PASSWORD=${DB_PASSWORD:-!ChangeMe!}
-      - POSTGRES_USER=${DB_USERNAME:-app}
+    env_file:
+      - ./env/postgres.env
     volumes:
       - ${DB_DATA_PATH:-./storage/database}:/var/lib/postgresql/data:rw
-    ### Search Service ###########################################################
-  elasticsearch-setup:
-    image: elasticsearch:${ELASTIC_VERSION:-8.0.0}
+  ### Search Service ###########################################################
+  elastic-setup:
+    image: elasticsearch:${ELASTIC_VERSION:-8.5.0}
     user: "0"
     command: >
       bash -c '
         if [ x${ELASTIC_PASSWORD:-!ChangeMe!} == x ]; then
           echo "Set the ELASTIC_PASSWORD environment variable in the .env file";
-          exit 1;
-        elif [ x${KIBANA_PASSWORD:-!ChangeMe!} == x ]; then
-          echo "Set the KIBANA_PASSWORD environment variable in the .env file";
           exit 1;
         fi;
         if [[ ! -f config/certs/ca.zip ]]; then
@@ -65,15 +143,15 @@ services:
         chmod 755 config/certs;
         chmod 755 config/certs/ca;
         echo "Waiting for Elasticsearch availability";
-        until curl -s --proxy false --cacert config/certs/ca/ca.crt https://elasticsearch-node-a:9200 | grep -q "missing authentication credentials"; do sleep 30; done;
+        until curl --cacert config/certs/ca/ca.crt https://elasticsearch-node-a:9200 | grep -q "missing authentication credentials"; do sleep 30; done;
         echo "Setting kibana_system password";
-        until curl -s --proxy false -X POST --cacert config/certs/ca/ca.crt -u elastic:${ELASTIC_PASSWORD:-!ChangeMe!} -H "Content-Type: application/json" https://elasticsearch-node-a:9200/_security/user/kibana_system/_password -d "{\"password\":\"${KIBANA_PASSWORD:-!ChangeMe!}\"}" | grep -q "^{}"; do sleep 10; done;
+        until curl -X POST --cacert config/certs/ca/ca.crt -u elastic:${ELASTIC_PASSWORD:-!ChangeMe!} -H "Content-Type: application/json" https://elasticsearch-node-a:9200/_security/user/kibana_system/_password -d "{\"password\":\"${ELASTIC_PASSWORD:-!ChangeMe!}\"}" | grep -q "^{}"; do sleep 10; done;
         echo "All done!";
       '
     volumes:
-      - ${ES_DATA_PATH:-./storage/elasticsearch}-certs:/usr/share/elasticsearch/config/certs
-      - ${ES_DATA_PATH:-./storage/elasticsearch}-node-a:/usr/share/elasticsearch-node-a
-      - ${ES_DATA_PATH:-./storage/elasticsearch}-node-b:/usr/share/elasticsearch-node-b
+      - ${ES_DATA_PATH:-./storage/elasticsearch}/certs:/usr/share/elasticsearch/config/certs
+      - ${ES_DATA_PATH:-./storage/elasticsearch}/node-a:/usr/share/elasticsearch-node-a
+      - ${ES_DATA_PATH:-./storage/elasticsearch}/node-b:/usr/share/elasticsearch-node-b
     healthcheck:
       test:
         [
@@ -84,33 +162,23 @@ services:
       timeout: 5s
       retries: 120
 
-  elasticsearch-node-a:
+  elastic-node-a: &elasticnode
     depends_on:
-      - elasticsearch-setup
-    image: elasticsearch:${ELASTIC_VERSION:-8.0.1}
+      - elastic-setup
+    image: elasticsearch:${ELASTIC_VERSION:-8.5.0}
     environment:
-      - ES_SETTING_NODE_NAME=elasticsearch-node-a
-      - ES_SETTING_BOOTSTRAP_MEMORY__LOCK=true
-      - ES_SETTING_CLUSTER_NAME=${COMPOSE_PROJECT_NAME}-cluster
-      - ES_SETTING_CLUSTER_INITIAL__MASTER__NODES=elasticsearch-node-a,elasticsearch-node-b
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-!ChangeMe!}
       - ES_SETTING_DISCOVERY_SEED__HOSTS=elasticsearch-node-b
-      - ES_SETTING_INGEST_GEOIP_DOWNLOADER_ENABLED=false
-      - ES_SETTING_XPACK_LICENSE_SELF__GENERATED_TYPE=basic
-      - ES_SETTING_XPACK_SECURITY_ENABLED=true
-      - ES_SETTING_XPACK_SECURITY_HTTP_SSL_ENABLED=true
-      - ES_SETTING_XPACK_SECURITY_HTTP_SSL_KEY=certs/elasticsearch-node-a/elasticsearch-node-a.key
+      - ES_SETTING_NODE_NAME=elasticsearch-node-a
       - ES_SETTING_XPACK_SECURITY_HTTP_SSL_CERTIFICATE=certs/elasticsearch-node-a/elasticsearch-node-a.crt
-      - ES_SETTING_XPACK_SECURITY_HTTP_SSL_CERTIFICATE__AUTHORITIES=certs/ca/ca.crt
-      - ES_SETTING_XPACK_SECURITY_HTTP_SSL_VERIFICATION__MODE=certificate
-      - ES_SETTING_XPACK_SECURITY_TRANSPORT_SSL_ENABLED=true
-      - ES_SETTING_XPACK_SECURITY_TRANSPORT_SSL_KEY=certs/elasticsearch-node-a/elasticsearch-node-a.key
+      - ES_SETTING_XPACK_SECURITY_HTTP_SSL_KEY=certs/elasticsearch-node-a/elasticsearch-node-a.key
       - ES_SETTING_XPACK_SECURITY_TRANSPORT_SSL_CERTIFICATE=certs/elasticsearch-node-a/elasticsearch-node-a.crt
-      - ES_SETTING_XPACK_SECURITY_TRANSPORT_SSL_CERTIFICATE__AUTHORITIES=certs/ca/ca.crt
-      - ES_SETTING_XPACK_SECURITY_TRANSPORT_SSL_VERIFICATION__MODE=certificate
-      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-!ChangeMe!}
+      - ES_SETTING_XPACK_SECURITY_TRANSPORT_SSL_KEY=certs/elasticsearch-node-a/elasticsearch-node-a.key
+    env_file:
+      - ./env/elasticsearch.env
     volumes:
-      - ${ES_DATA_PATH:-./storage/elasticsearch}-certs:/usr/share/elasticsearch/config/certs
-      - ${ES_DATA_PATH:-./storage/elasticsearch}-node-a:/usr/share/elasticsearch/data
+      - ${ES_DATA_PATH:-./storage/elasticsearch}/certs:/usr/share/elasticsearch/config/certs
+      - ${ES_DATA_PATH:-./storage/elasticsearch}/node-a:/usr/share/elasticsearch/data
     deploy:
       resources:
         limits:
@@ -129,76 +197,34 @@ services:
       interval: 10s
       timeout: 10s
       retries: 120
-  elasticsearch-node-b:
-    depends_on:
-      - elasticsearch-node-a
-    image: elasticsearch:${ELASTIC_VERSION:-8.0.1}
+
+  elastic-node-b:
+    <<: *elasticnode
     environment:
-      - ES_SETTING_NODE_NAME=elasticsearch-node-b
-      - ES_SETTING_BOOTSTRAP_MEMORY__LOCK=true
-      - ES_SETTING_CLUSTER_NAME=${COMPOSE_PROJECT_NAME}-cluster
-      - ES_SETTING_CLUSTER_INITIAL__MASTER__NODES=elasticsearch-node-a,elasticsearch-node-b
       - ES_SETTING_DISCOVERY_SEED__HOSTS=elasticsearch-node-a
-      - ES_SETTING_INGEST_GEOIP_DOWNLOADER_ENABLED=false
-      - ES_SETTING_XPACK_LICENSE_SELF__GENERATED_TYPE=basic
-      - ES_SETTING_XPACK_SECURITY_ENABLED=true
-      - ES_SETTING_XPACK_SECURITY_HTTP_SSL_ENABLED=true
-      - ES_SETTING_XPACK_SECURITY_HTTP_SSL_KEY=certs/elasticsearch-node-b/elasticsearch-node-b.key
+      - ES_SETTING_NODE_NAME=elasticsearch-node-b
       - ES_SETTING_XPACK_SECURITY_HTTP_SSL_CERTIFICATE=certs/elasticsearch-node-b/elasticsearch-node-b.crt
-      - ES_SETTING_XPACK_SECURITY_HTTP_SSL_CERTIFICATE__AUTHORITIES=certs/ca/ca.crt
-      - ES_SETTING_XPACK_SECURITY_HTTP_SSL_VERIFICATION__MODE=certificate
-      - ES_SETTING_XPACK_SECURITY_TRANSPORT_SSL_ENABLED=true
-      - ES_SETTING_XPACK_SECURITY_TRANSPORT_SSL_KEY=certs/elasticsearch-node-b/elasticsearch-node-b.key
+      - ES_SETTING_XPACK_SECURITY_HTTP_SSL_KEY=certs/elasticsearch-node-b/elasticsearch-node-b.key
       - ES_SETTING_XPACK_SECURITY_TRANSPORT_SSL_CERTIFICATE=certs/elasticsearch-node-b/elasticsearch-node-b.crt
-      - ES_SETTING_XPACK_SECURITY_TRANSPORT_SSL_CERTIFICATE__AUTHORITIES=certs/ca/ca.crt
-      - ES_SETTING_XPACK_SECURITY_TRANSPORT_SSL_VERIFICATION__MODE=certificate
-      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-!ChangeMe!}
+      - ES_SETTING_XPACK_SECURITY_TRANSPORT_SSL_KEY=certs/elasticsearch-node-b/elasticsearch-node-b.key
     volumes:
-      - ${ES_DATA_PATH:-./storage/elasticsearch}-certs:/usr/share/elasticsearch/config/certs
-      - ${ES_DATA_PATH:-./storage/elasticsearch}-node-b:/usr/share/elasticsearch/data
-    deploy:
-      resources:
-        limits:
-          cpus: ${ELASTIC_CPU_LIMIT:-0.50}
-          memory: ${ELASTIC_MEMORY_LIMIT:-3072M}
-    ulimits:
-      memlock:
-        soft: -1
-        hard: -1
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "curl -s --cacert config/certs/ca/ca.crt https://localhost:9200 | grep -q 'missing authentication credentials'",
-        ]
-      interval: 10s
-      timeout: 10s
-      retries: 120
+      - ${ES_DATA_PATH:-./storage/elasticsearch}/certs:/usr/share/elasticsearch/config/certs
+      - ${ES_DATA_PATH:-./storage/elasticsearch}/node-b:/usr/share/elasticsearch/data
+
   kibana:
     depends_on:
-      elasticsearch-node-a:
+      elastic-node-a:
         condition: service_healthy
-      elasticsearch-node-b:
+      elastic-node-b:
         condition: service_healthy
-    image: kibana:${ELASTIC_VERSION:-8.0.1}
-    environment:
-      - SERVERNAME=kibana
-      - ELASTICSEARCH_HOSTS=https://elasticsearch-node-a:9200
-      - ELASTICSEARCH_SSL_CERTIFICATEAUTHORITIES=config/certs/ca/ca.crt
-      - ELASTICSEARCH_USERNAME=kibana_system
-      - ELASTICSEARCH_PASSWORD=${KIBANA_PASSWORD:-!ChangeMe!}
-      - SERVER_PUBLICBASEURL=https://kibana.${COMPOSE_PROJECT_NAME}.localhost
-      - TELEMETRY_ENABLED=false
+    image: kibana:${ELASTIC_VERSION:-8.5.0}
+    env_file:
+      - ./env/kibana.env
     volumes:
-      - ${ES_DATA_PATH:-./storage/elasticsearch}-certs:/usr/share/kibana/config/certs
+      - ${ES_DATA_PATH:-./storage/elasticsearch}/certs:/usr/share/kibana/config/certs
     networks:
       - default
       - public
-    deploy:
-      resources:
-        limits:
-          cpus: ${ELASTIC_CPU_LIMIT:-0.50}
-          memory: ${ELASTIC_MEMORY_LIMIT:-3072M}
     healthcheck:
       test:
         [
@@ -208,6 +234,7 @@ services:
       interval: 10s
       timeout: 10s
       retries: 120
+
 networks:
   public:
     name: ${EXTERNAL_NETWORK:-caddy}

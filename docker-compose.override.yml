@@ -2,6 +2,10 @@ version: "3.4"
 
 # Development environment override
 services:
+  app:
+    labels:
+      caddy: ${COMPOSE_PROJECT_NAME}.localhost
+      caddy.reverse_proxy: "{{upstreams 8000}}"
   database-admin:
     labels:
       caddy: db.${COMPOSE_PROJECT_NAME}.localhost
