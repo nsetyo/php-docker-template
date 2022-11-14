@@ -78,6 +78,7 @@ RUN if [ ${INSTALL_COMPOSER} = true ]; then \
     && php composer-setup.php \
     && php -r "unlink('composer-setup.php'); unlink('installer.sig');" \
     && mv composer.phar /usr/local/bin/composer \
+    && /usr/local/bin/composer completion bash > /etc/bash_completion.d/composer \
     ;fi
 
 ARG COMPOSER_REPO_PACKAGIST
