@@ -89,9 +89,8 @@ services:
       - { <<: [ *sourced ] }
       - { <<: [ *ssh     ] }
       - ./:/srv
-      - ./containers/php-fpm/conf.d:/usr/local/etc/php/local.d
-      - ./storage/cache/composer:/root/.composer/cache
       - ./storage/code-server/php-fpm/:/root/.vscode-server
+      - ./storage/cache/composer:/root/.composer/cache
 
   ### Database Service #########################################################
   database-admin:
