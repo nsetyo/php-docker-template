@@ -98,6 +98,7 @@ services:
     environment:
       - ADMINER_DEFAULT_SERVER=database
     networks:
+      - default
       - public
     depends_on:
       - database
